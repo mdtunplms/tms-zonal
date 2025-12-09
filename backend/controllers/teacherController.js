@@ -144,7 +144,10 @@ exports.getTeacher = async (req, res) => {
 
     // Get work history
     const [workHistory] = await pool.query(
-      `SELECT th.*, 
+      `SELECT 
+              th.transfer_id,
+              th.transfer_date,
+              th.remarks,
               fs.school_name as from_school,
               ts.school_name as to_school
        FROM transfer_history th
@@ -181,9 +184,19 @@ exports.createTeacher = async (req, res) => {
     const {
       nic, first_name, last_name, gender, dob,
       appointment_date, designation, mobile, email,
-      appointed_subject_id, current_school_id,
-      work_history
+      appointed_subject_id, current_school_id
     } = req.body;
+
+    let work_history = [];
+if (req.body.work_history) {
+  try {
+    work_history = typeof req.body.work_history === 'string' 
+      ? JSON.parse(req.body.work_history) 
+      : req.body.work_history;
+  } catch (error) {
+    console.error('Error parsing work_history:', error);
+  }
+}
 
     let photo_url = null;
 
@@ -260,18 +273,18 @@ exports.updateTeacher = async (req, res) => {
     );
 
     if (existing.length === 0) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: 'Teacher not found' 
+        message: 'Teacher not found'
       });
     }
 
     // Check permissions for principal
     if (req.user.role === 'Principal') {
       if (existing[0].current_school_id !== req.user.schoolId) {
-        return res.status(403).json({ 
+        return res.status(403).json({
           success: false,
-          message: 'Not authorized to update this teacher' 
+          message: 'Not authorized to update this teacher'
         });
       }
     }
@@ -280,6 +293,23 @@ exports.updateTeacher = async (req, res) => {
       first_name, last_name, gender, dob,
       designation, mobile, email, current_school_id
     } = req.body;
+
+    // -------------------------------
+    // FIX: Convert dob to YYYY-MM-DD
+    // -------------------------------
+    let formattedDob = null;
+
+    if (dob) {
+      try {
+        formattedDob = new Date(dob).toISOString().split("T")[0]; 
+      } catch {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid date format for dob"
+        });
+      }
+    }
+    // -------------------------------
 
     let photo_url = existing[0].photo_url;
 
@@ -292,14 +322,25 @@ exports.updateTeacher = async (req, res) => {
       photo_url = result.secure_url;
     }
 
+    // Update teacher
     await pool.query(
       `UPDATE teachers 
        SET first_name = ?, last_name = ?, gender = ?, dob = ?,
            designation = ?, mobile = ?, email = ?, 
            current_school_id = ?, photo_url = ?
        WHERE teacher_id = ?`,
-      [first_name, last_name, gender, dob, designation, mobile, email,
-       current_school_id, photo_url, id]
+      [
+        first_name,
+        last_name,
+        gender,
+        formattedDob,   // USE FIXED DOB
+        designation,
+        mobile,
+        email,
+        current_school_id,
+        photo_url,
+        id
+      ]
     );
 
     res.json({
