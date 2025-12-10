@@ -1,9 +1,10 @@
 const pool = require('../config/db');
 const cloudinary = require('../config/cloudinary');
+const bcrypt = require('bcryptjs');
 
-// @desc    Get all teachers with filters
-// @route   GET /api/teachers
-// @access  Private
+// --------------------------------------------------------
+// GET ALL TEACHERS
+// --------------------------------------------------------
 exports.getTeachers = async (req, res) => {
   try {
     const { 
@@ -40,7 +41,6 @@ exports.getTeachers = async (req, res) => {
 
     const params = [];
 
-    // Apply filters based on user role
     if (req.user.role === 'Principal' && req.user.schoolId) {
       query += ' AND t.current_school_id = ?';
       params.push(req.user.schoolId);
@@ -61,14 +61,12 @@ exports.getTeachers = async (req, res) => {
       params.push(subject_id);
     }
 
-    // Calculate offset
     const offset = (page - 1) * limit;
     query += ' ORDER BY t.teacher_id DESC LIMIT ? OFFSET ?';
     params.push(parseInt(limit), parseInt(offset));
 
     const [teachers] = await pool.query(query, params);
 
-    // Get total count for pagination
     let countQuery = `SELECT COUNT(*) as total FROM teachers t WHERE 1=1`;
     const countParams = [];
 
@@ -80,7 +78,6 @@ exports.getTeachers = async (req, res) => {
     const [countResult] = await pool.query(countQuery, countParams);
     const total = countResult[0].total;
 
-    // Filter by years in current school (after query)
     let filteredTeachers = teachers;
     if (min_years) {
       filteredTeachers = teachers.filter(t => t.years_in_current_school >= parseInt(min_years));
@@ -103,14 +100,13 @@ exports.getTeachers = async (req, res) => {
   }
 };
 
-// @desc    Get single teacher by ID
-// @route   GET /api/teachers/:id
-// @access  Private
+// --------------------------------------------------------
+// GET SINGLE TEACHER
+// --------------------------------------------------------
 exports.getTeacher = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Check permissions
     if (req.user.role === 'Teacher' && req.user.userId !== parseInt(id)) {
       return res.status(403).json({ 
         success: false,
@@ -142,7 +138,6 @@ exports.getTeacher = async (req, res) => {
       });
     }
 
-    // Get work history
     const [workHistory] = await pool.query(
       `SELECT 
               th.transfer_id,
@@ -172,12 +167,12 @@ exports.getTeacher = async (req, res) => {
   }
 };
 
-// @desc    Create new teacher
-// @route   POST /api/teachers
-// @access  Private/Admin
+// --------------------------------------------------------
+// CREATE TEACHER + USER LOGIN
+// --------------------------------------------------------
 exports.createTeacher = async (req, res) => {
   const connection = await pool.getConnection();
-  
+
   try {
     await connection.beginTransaction();
 
@@ -187,29 +182,58 @@ exports.createTeacher = async (req, res) => {
       appointed_subject_id, current_school_id
     } = req.body;
 
-    let work_history = [];
-if (req.body.work_history) {
-  try {
-    work_history = typeof req.body.work_history === 'string' 
-      ? JSON.parse(req.body.work_history) 
-      : req.body.work_history;
-  } catch (error) {
-    console.error('Error parsing work_history:', error);
-  }
-}
-
-    let photo_url = null;
-
-    // Upload photo to Cloudinary if provided
-    if (req.files && req.files.photo) {
-      const result = await cloudinary.uploader.upload(req.files.photo.tempFilePath, {
-        folder: 'teachers',
-        transformation: [{ width: 400, height: 400, crop: 'fill' }]
+    // Email required for login
+    if (!email) {
+      await connection.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required to create teacher login account'
       });
-      photo_url = result.secure_url;
     }
 
-    // Insert teacher
+    const [existingEmail] = await connection.query(
+      'SELECT email FROM teachers WHERE email = ?',
+      [email]
+    );
+
+    if (existingEmail.length > 0) {
+      await connection.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Email already exists'
+      });
+    }
+
+    let work_history = [];
+    if (req.body.work_history) {
+      try {
+        work_history = typeof req.body.work_history === 'string' 
+          ? JSON.parse(req.body.work_history) 
+          : req.body.work_history;
+      } catch (err) {
+        console.error('Error parsing work_history:', err);
+      }
+    }
+
+    let photo_url = null;
+    if (req.files && req.files.photo) {
+      try {
+        const result = await cloudinary.uploader.upload(req.files.photo.tempFilePath, {
+          folder: 'teachers',
+          transformation: [{ width: 400, height: 400, crop: 'fill' }]
+        });
+        photo_url = result.secure_url;
+      } catch (uploadError) {
+        console.error(uploadError);
+      }
+    }
+
+    const [roleInfo] = await connection.query(
+      "SELECT role_id FROM roles WHERE role_name = 'Teacher'"
+    );
+
+    const teacherRoleId = roleInfo[0].role_id;
+
     const [result] = await connection.query(
       `INSERT INTO teachers 
        (nic, first_name, last_name, gender, dob, appointment_date, 
@@ -221,71 +245,79 @@ if (req.body.work_history) {
 
     const teacherId = result.insertId;
 
-    // Insert work history if provided
     if (work_history && Array.isArray(work_history)) {
       for (const history of work_history) {
-        await connection.query(
-          `INSERT INTO transfer_history 
-           (teacher_id, from_school_id, to_school_id, transfer_date, remarks)
-           VALUES (?, ?, ?, ?, ?)`,
-          [teacherId, history.from_school_id, history.to_school_id, 
-           history.transfer_date, history.remarks || null]
-        );
+        if (history.from_school_id && history.to_school_id && history.transfer_date) {
+          await connection.query(
+            `INSERT INTO transfer_history 
+             (teacher_id, from_school_id, to_school_id, transfer_date, remarks)
+             VALUES (?, ?, ?, ?, ?)`,
+            [teacherId, history.from_school_id, history.to_school_id, 
+             history.transfer_date, history.remarks || null]
+          );
+        }
       }
     }
+
+    // ---------------------------
+    // CREATE USER LOGIN ACCOUNT
+    // ---------------------------
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(nic, salt);
+
+    await connection.query(
+      `INSERT INTO users (username, password, role_id, teacher_id)
+       VALUES (?, ?, ?, ?)`,
+      [email, hashedPassword, teacherRoleId, teacherId]
+    );
 
     await connection.commit();
 
     res.status(201).json({
       success: true,
-      message: 'Teacher created successfully',
-      data: { teacher_id: teacherId }
+      message: 'Teacher created successfully with login credentials',
+      data: {
+        teacher_id: teacherId,
+        login_credentials: {
+          username: email,
+          initial_password: 'NIC (Please change after first login)'
+        }
+      }
     });
 
   } catch (error) {
     await connection.rollback();
-    console.error(error);
-    
-    if (error.code === 'ER_DUP_ENTRY') {
-      return res.status(400).json({ 
-        success: false,
-        message: 'NIC already exists' 
-      });
-    }
-    
-    res.status(500).json({ success: false, message: 'Server error' });
+    console.error('Create teacher error:', error);
+
+    res.status(500).json({
+      success: false,
+      message: 'Server error: ' + error.message
+    });
+
   } finally {
     connection.release();
   }
 };
 
-// @desc    Update teacher
-// @route   PUT /api/teachers/:id
-// @access  Private/Admin/Principal
+// --------------------------------------------------------
+// UPDATE TEACHER
+// --------------------------------------------------------
 exports.updateTeacher = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Check if teacher exists
     const [existing] = await pool.query(
       'SELECT * FROM teachers WHERE teacher_id = ?',
       [id]
     );
 
     if (existing.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Teacher not found'
-      });
+      return res.status(404).json({ success: false, message: 'Teacher not found' });
     }
 
-    // Check permissions for principal
     if (req.user.role === 'Principal') {
       if (existing[0].current_school_id !== req.user.schoolId) {
-        return res.status(403).json({
-          success: false,
-          message: 'Not authorized to update this teacher'
-        });
+        return res.status(403).json({ success: false, message: 'Not authorized' });
       }
     }
 
@@ -294,26 +326,12 @@ exports.updateTeacher = async (req, res) => {
       designation, mobile, email, current_school_id
     } = req.body;
 
-    // -------------------------------
-    // FIX: Convert dob to YYYY-MM-DD
-    // -------------------------------
     let formattedDob = null;
-
     if (dob) {
-      try {
-        formattedDob = new Date(dob).toISOString().split("T")[0]; 
-      } catch {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid date format for dob"
-        });
-      }
+      formattedDob = new Date(dob).toISOString().split("T")[0];
     }
-    // -------------------------------
 
     let photo_url = existing[0].photo_url;
-
-    // Upload new photo if provided
     if (req.files && req.files.photo) {
       const result = await cloudinary.uploader.upload(req.files.photo.tempFilePath, {
         folder: 'teachers',
@@ -322,31 +340,18 @@ exports.updateTeacher = async (req, res) => {
       photo_url = result.secure_url;
     }
 
-    // Update teacher
     await pool.query(
       `UPDATE teachers 
-       SET first_name = ?, last_name = ?, gender = ?, dob = ?,
-           designation = ?, mobile = ?, email = ?, 
-           current_school_id = ?, photo_url = ?
-       WHERE teacher_id = ?`,
+       SET first_name=?, last_name=?, gender=?, dob=?, designation=?,
+           mobile=?, email=?, current_school_id=?, photo_url=?
+       WHERE teacher_id=?`,
       [
-        first_name,
-        last_name,
-        gender,
-        formattedDob,   // USE FIXED DOB
-        designation,
-        mobile,
-        email,
-        current_school_id,
-        photo_url,
-        id
+        first_name, last_name, gender, formattedDob, designation,
+        mobile, email, current_school_id, photo_url, id
       ]
     );
 
-    res.json({
-      success: true,
-      message: 'Teacher updated successfully'
-    });
+    res.json({ success: true, message: 'Teacher updated successfully' });
 
   } catch (error) {
     console.error(error);
@@ -354,32 +359,49 @@ exports.updateTeacher = async (req, res) => {
   }
 };
 
-// @desc    Delete teacher
-// @route   DELETE /api/teachers/:id
-// @access  Private/Admin
+// --------------------------------------------------------
+// DELETE TEACHER + DELETE USER ACCOUNT
+// --------------------------------------------------------
 exports.deleteTeacher = async (req, res) => {
+  const connection = await pool.getConnection();
   try {
+    await connection.beginTransaction();
+
     const { id } = req.params;
 
-    const [result] = await pool.query(
+    const [teacher] = await connection.query(
+      'SELECT * FROM teachers WHERE teacher_id = ?',
+      [id]
+    );
+
+    if (teacher.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ success: false, message: 'Teacher not found' });
+    }
+
+    await connection.query(
+      'DELETE FROM users WHERE teacher_id = ?',
+      [id]
+    );
+
+    await connection.query(
       'DELETE FROM teachers WHERE teacher_id = ?',
       [id]
     );
 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ 
-        success: false,
-        message: 'Teacher not found' 
-      });
-    }
+    await connection.commit();
 
     res.json({
       success: true,
-      message: 'Teacher deleted successfully'
+      message: 'Teacher and associated user account deleted successfully'
     });
 
   } catch (error) {
+    await connection.rollback();
     console.error(error);
     res.status(500).json({ success: false, message: 'Server error' });
+
+  } finally {
+    connection.release();
   }
 };

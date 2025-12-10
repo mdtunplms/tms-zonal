@@ -1,9 +1,14 @@
-import React from 'react';
+import React, { useContext } from 'react';
 import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Navbar from './Navbar';
+import ChangePasswordModal from '../common/ChangePasswordModal';
+import { AuthContext } from '../../context/AuthContext';
 
 const Layout = () => {
+
+  const { showChangePasswordModal, setShowChangePasswordModal, user } = useContext(AuthContext);
+
   return (
     <div className="flex h-screen bg-gray-100">
       <Sidebar />
@@ -13,6 +18,13 @@ const Layout = () => {
           <Outlet />
         </main>
       </div>
+
+      {showChangePasswordModal && (
+        <ChangePasswordModal
+          isFirstLogin={user?.isFirstLogin}
+          onClose={() => setShowChangePasswordModal(false)}
+        />
+      )}
     </div>
   );
 };

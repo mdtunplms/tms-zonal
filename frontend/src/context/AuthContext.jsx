@@ -7,48 +7,86 @@ export const AuthContext = createContext();
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
     checkUser();
   }, []);
 
+  // ------------------------------------------------------
+  // Check logged-in user on page reload
+  // ------------------------------------------------------
   const checkUser = async () => {
     const token = localStorage.getItem('token');
+
     if (token) {
       try {
         const userData = await getCurrentUser();
         setUser(userData);
+
+        // If first login → force password change modal
+        if (userData.isFirstLogin) {
+          setShowChangePasswordModal(true);
+        }
       } catch (error) {
         localStorage.removeItem('token');
       }
     }
+
     setLoading(false);
   };
 
+  // ------------------------------------------------------
+  // Login Function (Teachers + Admins)
+  // ------------------------------------------------------
   const login = async (username, password) => {
     try {
       const data = await loginUser(username, password);
+
       localStorage.setItem('token', data.token);
       setUser(data.user);
+
+      // If teacher is logging in for the first time → show modal
+      if (data.user.isFirstLogin) {
+        setShowChangePasswordModal(true);
+      }
+
       navigate('/dashboard');
       return { success: true };
+
     } catch (error) {
-      return { 
-        success: false, 
-        message: error.response?.data?.message || 'Login failed' 
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Login failed'
       };
     }
   };
 
+  // ------------------------------------------------------
+  // Logout
+  // ------------------------------------------------------
   const logout = () => {
     localStorage.removeItem('token');
     setUser(null);
+    setShowChangePasswordModal(false);
     navigate('/login');
   };
 
+  // ------------------------------------------------------
+  // Provider
+  // ------------------------------------------------------
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        loading,
+        login,
+        logout,
+        showChangePasswordModal,
+        setShowChangePasswordModal,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
