@@ -24,8 +24,8 @@ export const AuthProvider = ({ children }) => {
       try {
         const userData = await getCurrentUser();
         setUser(userData);
-
-        // If first login → force password change modal
+        
+        // Show change password modal if first login
         if (userData.isFirstLogin) {
           setShowChangePasswordModal(true);
         }
@@ -37,28 +37,25 @@ export const AuthProvider = ({ children }) => {
     setLoading(false);
   };
 
-  // ------------------------------------------------------
-  // Login Function (Teachers + Admins)
-  // ------------------------------------------------------
   const login = async (username, password) => {
     try {
       const data = await loginUser(username, password);
 
       localStorage.setItem('token', data.token);
       setUser(data.user);
-
-      // If teacher is logging in for the first time → show modal
+      
+      // Show change password modal if first login
       if (data.user.isFirstLogin) {
         setShowChangePasswordModal(true);
       }
-
+      
       navigate('/dashboard');
       return { success: true };
 
     } catch (error) {
-      return {
-        success: false,
-        message: error.response?.data?.message || 'Login failed'
+      return { 
+        success: false, 
+        message: error.response?.data?.message || 'Login failed' 
       };
     }
   };
@@ -79,11 +76,11 @@ export const AuthProvider = ({ children }) => {
   return (
     <AuthContext.Provider
       value={{
-        user,
-        loading,
-        login,
-        logout,
-        showChangePasswordModal,
+      user, 
+      loading, 
+      login, 
+      logout, 
+      showChangePasswordModal,
         setShowChangePasswordModal,
       }}
     >

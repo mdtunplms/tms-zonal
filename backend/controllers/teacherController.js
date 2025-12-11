@@ -107,6 +107,7 @@ exports.getTeacher = async (req, res) => {
   try {
     const { id } = req.params;
 
+    // Teacher can view only their own details
     if (req.user.role === 'Teacher' && req.user.userId !== parseInt(id)) {
       return res.status(403).json({ 
         success: false,
@@ -207,8 +208,8 @@ exports.createTeacher = async (req, res) => {
     let work_history = [];
     if (req.body.work_history) {
       try {
-        work_history = typeof req.body.work_history === 'string' 
-          ? JSON.parse(req.body.work_history) 
+        work_history = typeof req.body.work_history === 'string'
+          ? JSON.parse(req.body.work_history)
           : req.body.work_history;
       } catch (err) {
         console.error('Error parsing work_history:', err);
@@ -252,7 +253,7 @@ exports.createTeacher = async (req, res) => {
             `INSERT INTO transfer_history 
              (teacher_id, from_school_id, to_school_id, transfer_date, remarks)
              VALUES (?, ?, ?, ?, ?)`,
-            [teacherId, history.from_school_id, history.to_school_id, 
+            [teacherId, history.from_school_id, history.to_school_id,
              history.transfer_date, history.remarks || null]
           );
         }
@@ -280,7 +281,7 @@ exports.createTeacher = async (req, res) => {
         teacher_id: teacherId,
         login_credentials: {
           username: email,
-          initial_password: 'NIC (Please change after first login)'
+          initial_password: 'NIC'   // ✔ No forced password change
         }
       }
     });
@@ -326,10 +327,7 @@ exports.updateTeacher = async (req, res) => {
       designation, mobile, email, current_school_id
     } = req.body;
 
-    let formattedDob = null;
-    if (dob) {
-      formattedDob = new Date(dob).toISOString().split("T")[0];
-    }
+    let formattedDob = dob ? new Date(dob).toISOString().split("T")[0] : null;
 
     let photo_url = existing[0].photo_url;
     if (req.files && req.files.photo) {

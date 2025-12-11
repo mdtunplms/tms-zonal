@@ -103,7 +103,7 @@ const Login = () => {
           <ul className="text-xs text-blue-700 space-y-1">
             <li>• <strong>Username:</strong> Your email address</li>
             <li>• <strong>Initial Password:</strong> Your NIC</li>
-            <li>• You must change your password after first login</li>
+            <li>• Please change your password after first login</li>
           </ul>
         </div>
 

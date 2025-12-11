@@ -51,7 +51,7 @@ exports.login = async (req, res) => {
 
     const user = users[0];
 
-    // Compare password
+    // Validate password
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(401).json({
@@ -60,13 +60,7 @@ exports.login = async (req, res) => {
       });
     }
 
-    // FIRST LOGIN CHECK — password still equals NIC
-    let isFirstLogin = false;
-    if (user.nic) {
-      isFirstLogin = await bcrypt.compare(user.nic, user.password);
-    }
-
-    // Generate token
+    // Generate JWT token
     const token = generateToken(
       user.user_id,
       user.role_name,
@@ -86,8 +80,7 @@ exports.login = async (req, res) => {
         zoneId: user.zone_id,
         name: user.first_name ? `${user.first_name} ${user.last_name}` : null,
         photo: user.photo_url,
-        email: user.email,
-        isFirstLogin
+        email: user.email
       }
     });
 
@@ -121,6 +114,7 @@ exports.changePassword = async (req, res) => {
       });
     }
 
+    // Fetch current user
     const [users] = await pool.query(
       'SELECT * FROM users WHERE user_id = ?',
       [req.user.id]
@@ -135,7 +129,7 @@ exports.changePassword = async (req, res) => {
 
     const user = users[0];
 
-    // Verify current password
+    // Check current password
     const isMatch = await bcrypt.compare(currentPassword, user.password);
     if (!isMatch) {
       return res.status(401).json({
@@ -144,7 +138,7 @@ exports.changePassword = async (req, res) => {
       });
     }
 
-    // Hash new password
+    // Hash the new password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(newPassword, salt);
 
